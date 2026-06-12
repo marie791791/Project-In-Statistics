@@ -1,0 +1,3215 @@
+---
+title: "Project in Statistics"
+author: "Marie Ramm"
+format: html
+editor: visual
+---
+
+Project in Statistics
+
+Marie Ramm, jrl918
+
+June 2026
+
+University of Copenhagen
+
+Advisor: Predrag Pilipovic
+
+# Library
+
+```{r}
+# ---- LOAD PACKAGES ---- 
+library(dplyr)
+library(skimr)
+library(tibble)
+library(grid)
+library(gridExtra)
+library(ggplot2)
+library(zoo)
+library(tidyr)
+library(expm) 
+library(httr)
+library(readxl)
+library(dplyr)
+library(patchwork)
+
+
+```
+
+# Data Preprocessing
+
+```{r}
+excel_url = "https://www.iceandclimate.nbi.ku.dk/data/GICC05modelext_GRIP_and_GISP2_and_resampled_data_series_Seierstad_et_al._2014_version_10Dec2014-2.xlsx"
+res = httr::GET(excel_url)
+excel_file = tempfile(fileext = ".xlsx")
+# Write downloaded content to file
+writeBin(content(res, "raw"), excel_file)
+
+Ca2data = readxl::read_excel(excel_file, sheet = 3,
+                              range = "A51:I12278") %>%
+  slice(-1) %>%
+  select(1, ncol(.)) %>%
+  mutate_all(as.numeric) %>%
+  rename(age = 1, Ca2 = 2)
+unlink(excel_file)
+readr::write_csv(Ca2data, excel_file)
+```
+
+```{r}
+# Active df in time-frame 7900 - 104000, NA filled w/ linear interpolation, 4804 rows
+Ca2_final = Ca2data %>%
+  filter(age >= 30000, age < 80000) %>%
+  mutate(Ca2 = na.approx(Ca2)) %>%
+  group_by(age) %>%
+  summarise(Ca2 = mean(Ca2), .groups = "drop") %>%
+  mutate(Ca2 = -log(Ca2)) %>%
+  mutate(X = Ca2 - mean(Ca2)) %>%
+  mutate(age = age/1000) %>%
+  arrange(desc(age))  %>% 
+  mutate(V = (lead(X) - X)/0.02) %>% 
+  filter(is.finite(V))
+
+Ca2_data = cbind(Ca2_final$X, Ca2_final$V)
+```
+
+```{r}
+p1 = ggplot(Ca2_final, aes(x = age, y = X)) +
+  geom_line(linewidth = 0.7) +
+  labs(
+    title = expression(X[t]),
+    x = "Age (kiloyears before present)",
+    y = expression(X[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank() 
+  ) +
+  scale_x_reverse()
+
+p2 = ggplot(Ca2_final, aes(x = age, y = V)) +
+  geom_line(linewidth = 0.7) +
+  labs(
+    title = expression(V[t]),
+    x = "Age (kiloyears before present)",
+    y = expression(V[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_reverse()
+
+grid.arrange(
+  p1,
+  p2,
+  ncol = 1, 
+  top = expression("Transformed Greenland Ice-Core Process " * X[t] * " and Estimated Velocity " * V[t])
+)
+```
+
+```{r}
+p1Density = ggplot(Ca2_final, aes(x = X)) +
+  geom_density() +
+  labs(
+    title = expression("Ice Land Core Greenland: X[t] Density"),
+    x = "Density",
+    y = expression(X[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank() 
+  ) +
+  scale_x_reverse()
+
+p2Density = ggplot(Ca2_final, aes(x = V)) +
+  geom_density() +
+  labs(
+    title = expression("V[t] Density"),
+    x = "Density",
+    y = expression(V[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_reverse()
+
+grid.arrange(
+  p1Density,
+  p2Density,
+  ncol = 1
+)
+```
+
+```{r}
+base_theme = theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+# ---- Top left: X_t over time ----
+p_xt = ggplot(Ca2_final, aes(x = age, y = X)) +
+  geom_line(linewidth = 0.4) +
+  # optional equilibrium lines:
+  # geom_hline(yintercept = c(eq1, eq2), colour = "darkred", linewidth = 0.8) +
+  labs(
+    x = NULL,
+    y = expression(X[t])
+  ) +
+  scale_x_reverse() +
+  base_theme +
+  theme(
+    axis.title.x = element_blank(),
+    plot.margin = margin(5.5, 5.5, 2, 5.5)
+  )
+
+# ---- Bottom left: V_t over time ----
+p_vt = ggplot(Ca2_final, aes(x = age, y = V)) +
+  geom_line(linewidth = 0.35) +
+  labs(
+    x = "time before present [ka]",
+    y = expression(V[t])
+    # If using rescaled forward differences instead:
+    # y = expression(sqrt(3)/2 * (X[t+h] - X[t])/h)
+  ) +
+  scale_x_reverse() +
+  base_theme +
+  theme(
+    plot.margin = margin(2, 5.5, 5.5, 5.5)
+  )
+
+# ---- Top right: density of X_t ----
+p_xdens = ggplot(Ca2_final, aes(x = X)) +
+  geom_density(linewidth = 0.8, colour = "black", fill = "darkred", alpha = 0.5) +
+  # optional equilibrium lines:
+  # geom_vline(xintercept = c(eq1, eq2), colour = "darkred", linewidth = 0.8) +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = NULL
+  ) +
+  base_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks = element_blank(),
+    plot.margin = margin(5.5, 5.5, 2, 2)
+  )
+
+# ---- Bottom right: density of V_t ----
+p_vdens = ggplot(Ca2_final, aes(x = V)) +
+  geom_density(linewidth = 0.8, colour = "black", fill = "darkred", alpha = 0.5) +
+  coord_flip() +
+  labs(
+    x = "empirical density",
+    y = NULL
+  ) +
+  base_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    plot.margin = margin(2, 5.5, 5.5, 2)
+  )
+
+((p_xt | p_xdens) / (p_vt | p_vdens)) +
+    plot_layout(widths = c(2, 1), heights = c(1, 1)) +
+    plot_annotation(
+        title = "Greenland Ice-Core Data: Process and Empirical Densities",
+        theme = theme(
+            plot.title = element_text(hjust = 0.5, face = "bold", size = 14)
+        )
+    )
+```
+
+# M0 - constant diffusion, full
+
+## Likelihood
+
+### Rough
+
+```{r}
+neg_loglik = function(theta, data, h) {
+  
+  # ---- sort data ---- 
+  data_old = data[-nrow(data), ]
+  data_new = data[-1, ]
+  n = nrow(data_old)
+  
+  # ---- Moments ---- #  generally move up 
+  X_old = data_old[,1]
+  Xexp  = mean(X_old)
+  Xexp2 = mean(X_old^2)
+  varX  = var(X_old)
+
+  #---- theta ----
+  eta   = theta[1]
+  a     = theta[2]
+  b     = theta[3]
+  c     = theta[4]
+  d     = theta[5]
+  gamma = theta[6]
+  
+  drift_const = 3 * a * Xexp2 + 2 * b * Xexp + c
+
+  A = matrix(c(0, 1,
+                drift_const, -eta),
+              nrow = 2, byrow = TRUE)
+  
+  # ---- B ----
+  inside_sqrt = varX + (Xexp + b / (3 * a))^2
+
+  bxPlus = -b / (3 * a) + sqrt(inside_sqrt)
+  bxMinus = -b / (3 * a) - sqrt(inside_sqrt)
+
+  B = cbind(ifelse(X_old > 0, bxPlus, bxMinus),0)
+
+    # ---- f ---- 
+  f_step = function(df, h) {
+        
+        X = df[,1]
+        V = df[,2]
+        
+        NonLin =
+            a * X^3 +
+            b * X^2 +
+            c * X +
+            d -
+            drift_const * (X -  B[, 1])
+        
+        out = cbind(
+            X,
+            V + h * NonLin
+        )
+        
+        return(out)
+    }
+  
+  # ---- Mu Step ---- 
+  mu_step = function(Y, df) {
+        
+        expAh = expm(A * h)
+
+        mu = as.matrix(Y - B) %*% t(expAh) + B
+        
+        return(mu)
+  }
+  
+  # ---- Residual ---- 
+  Y_old_half = f_step(data_old, h = 1/2*h)
+  Y_new_inv  = f_step(data_new, h = -1/2*h)
+    
+  Y_mu = mu_step(Y_old_half, data_old)
+    
+  Z = Y_new_inv - Y_mu
+    
+  # ---- Constant diffusion covariance ----
+  Sigma = matrix(
+      c(0, 0,
+        0, gamma),
+      nrow = 2,
+      byrow = TRUE
+    )
+    
+   M = rbind(
+       cbind(A, Sigma),
+       cbind(matrix(0, 2, 2), -t(A))
+    )
+   
+  R = expm(M * h)
+    
+  RBias = expm(M*(3/2)*h)
+  
+  I = R[1:2, 3:4]
+  F1 = R[1:2, 1:2]
+    
+  Omega = I %*% t(F1)
+  
+    
+  # Rough
+  
+  OmegaBias = (RBias[1:2, 3:4] %*% t(RBias[1:2, 1:2]))[2,2]
+  
+  log_det = log(OmegaBias)
+
+  first = Z[,2]^2 * 1/(Omega[2, 2])
+
+  val = sum(first) + n*(2/3*log_det)
+  
+ return(val)
+ }
+
+```
+
+### Full
+
+```{r}
+neg_loglik_full = function(theta, data, h) {
+  
+  # ---- sort data ---- 
+  data_old = data[-nrow(data), ]
+  data_new = data[-1, ]
+  n = nrow(data_old)
+  
+  # ---- Moments ---- 
+  X_old = data_old[,1]
+  Xexp  = mean(X_old)
+  Xexp2 = mean(X_old^2)
+  varX  = var(X_old)
+
+  #---- theta ----
+  eta   = theta[1]
+  a     = theta[2]
+  b     = theta[3]
+  c     = theta[4]
+  d     = theta[5]
+  gamma = theta[6]
+  
+  drift_const = 3 * a * Xexp2 + 2 * b * Xexp + c
+
+  A = matrix(c(0, 1,
+                drift_const, -eta),
+              nrow = 2, byrow = TRUE)
+  
+  # ---- B ----
+  inside_sqrt = varX + (Xexp + b / (3 * a))^2
+
+  bxPlus = -b / (3 * a) + sqrt(inside_sqrt)
+  bxMinus = -b / (3 * a) - sqrt(inside_sqrt)
+
+  B = cbind(ifelse(X_old > 0, bxPlus, bxMinus),0)
+
+    # ---- f ---- 
+  f_step = function(df, h) {
+        
+        X = df[,1]
+        V = df[,2]
+        
+        NonLin =
+            a * X^3 +
+            b * X^2 +
+            c * X +
+            d -
+            drift_const * (X -  B[, 1])
+        
+        out = cbind(
+            X,
+            V + h * NonLin
+        )
+        
+        return(out)
+    }
+  
+  # ---- Mu Step ---- 
+  mu_step = function(Y, df) {
+        
+        expAh = expm(A * h)
+
+        mu = as.matrix(Y - B) %*% t(expAh) + B
+        
+        return(mu)
+  }
+  
+  # ---- Residual ---- 
+  Y_old_half = f_step(data_old, h = 1/2*h)
+  Y_new_inv  = f_step(data_new, h = -1/2*h)
+    
+  Y_mu = mu_step(Y_old_half, data_old)
+    
+  Z = Y_new_inv - Y_mu
+    
+  # ---- Constant diffusion covariance ----
+  Sigma = matrix(
+      c(0, 0,
+        0, gamma),
+      nrow = 2,
+      byrow = TRUE
+    )
+    
+   M = rbind(
+       cbind(A, Sigma),
+       cbind(matrix(0, 2, 2), -t(A))
+    )
+   
+  R = expm(M * h)
+    
+  RBias = expm(M*(3/4)*h)
+  
+  I = R[1:2, 3:4]
+  F1 = R[1:2, 1:2] 
+    
+  Omega = I %*% t(F1)
+  
+  #FULL 
+   
+  OmegaBias =  RBias[1:2, 3:4] %*% t(RBias[1:2, 1:2])
+
+  omega_inv = solve(Omega)
+
+  log_det = log(det(OmegaBias))
+
+  first = Z[,1]^2 * omega_inv[1, 1] +
+    2 * Z[,1] * Z[,2] * omega_inv[1, 2] +
+    Z[,2]^2 * omega_inv[2, 2]
+
+
+  val = sum(first) + n*(4/3*log_det)
+    
+ return(val)
+ }
+
+```
+
+### Full no bias
+
+```{r}
+neg_loglik_no_bias = function(theta, data, h) {
+  
+  # ---- sort data ---- 
+  data_old = data[-nrow(data), ]
+  data_new = data[-1, ]
+  n = nrow(data_old)
+  
+  # ---- Moments ---- 
+  X_old = data_old[,1]
+  Xexp  = mean(X_old)
+  Xexp2 = mean(X_old^2)
+  varX  = var(X_old)
+
+  #---- theta ----
+  eta   = theta[1]
+  a     = theta[2]
+  b     = theta[3]
+  c     = theta[4]
+  d     = theta[5]
+  gamma = theta[6]
+  
+  drift_const = 3 * a * Xexp2 + 2 * b * Xexp + c
+
+  A = matrix(c(0, 1,
+                drift_const, -eta),
+              nrow = 2, byrow = TRUE)
+  
+  # ---- B ----
+  inside_sqrt = varX + (Xexp + b / (3 * a))^2
+
+  bxPlus = -b / (3 * a) + sqrt(inside_sqrt)
+  bxMinus = -b / (3 * a) - sqrt(inside_sqrt)
+
+  B = cbind(ifelse(X_old > 0, bxPlus, bxMinus),0)
+
+    # ---- f ---- 
+  f_step = function(df, h) {
+        
+        X = df[,1]
+        V = df[,2]
+        
+        NonLin =
+            a * X^3 +
+            b * X^2 +
+            c * X +
+            d -
+            drift_const * (X -  B[, 1])
+        
+        out = cbind(
+            X,
+            V + h * NonLin
+        )
+        
+        return(out)
+    }
+  
+  # ---- Mu Step ---- 
+  mu_step = function(Y, df) {
+        
+        expAh = expm(A * h)
+
+        mu = as.matrix(Y - B) %*% t(expAh) + B
+        
+        return(mu)
+  }
+  
+  # ---- Residual ---- 
+  Y_old_half = f_step(data_old, h = 1/2*h)
+  Y_new_inv  = f_step(data_new, h = -1/2*h)
+    
+  Y_mu = mu_step(Y_old_half, data_old)
+    
+  Z = Y_new_inv - Y_mu
+    
+  # ---- Constant diffusion covariance ----
+  Sigma = matrix(
+      c(0, 0,
+        0, gamma),
+      nrow = 2,
+      byrow = TRUE
+    )
+    
+   M = rbind(
+       cbind(A, Sigma),
+       cbind(matrix(0, 2, 2), -t(A))
+    )
+   
+  R = expm(M * h)
+  
+  I = R[1:2, 3:4]
+  F1 = R[1:2, 1:2] 
+    
+  Omega = I %*% t(F1)
+  
+  #FULL 
+  omega_inv = solve(Omega)
+
+  log_det = log(det(Omega))
+
+  first = Z[,1]^2 * omega_inv[1, 1] +
+    2 * Z[,1] * Z[,2] * omega_inv[1, 2] +
+    Z[,2]^2 * omega_inv[2, 2]
+
+
+  val = sum(first) + n*(log_det)
+    
+ return(val)
+ }
+```
+
+## Optimize
+
+```{r}
+theta_start0 = c(
+  eta = 60,
+  a = -130,   
+  b = 0,
+  c = 115,
+  d = 0,
+  gamma = 8000 
+)
+
+fitBFGS = optim(
+  par = theta_start0,
+  fn = neg_loglik,
+  data = Ca2_data,
+  h = 0.02,
+  method = "L-BFGS-B",
+  lower = c(
+    eta = 1e-8,
+    a = -Inf,
+    b = -Inf,
+    c = -Inf,
+    d = -Inf,
+    gamma = 200
+  ),
+  upper = c(
+    eta = Inf,
+    a = -1e-8,
+    b = Inf,
+    c = Inf,
+    d = Inf,
+    gamma = Inf
+  )
+)
+
+# ---- BFGS ---- 
+fitBFGS$value
+fitBFGS$convergence
+fitBFGS$par
+```
+
+```{r}
+fitBFGS_full = optim(
+  par = theta_start0,
+  fn = neg_loglik_full,
+  data = Ca2_data,
+  h = 0.02,
+  method = "L-BFGS-B",
+  lower = c(
+    eta = 1e-8,
+    a = -Inf,
+    b = -Inf,
+    c = -Inf,
+    d = -Inf,
+    gamma = 200
+  ),
+  upper = c(
+    eta = Inf,
+    a = -1e-8,
+    b = Inf,
+    c = Inf,
+    d = Inf,
+    gamma = Inf
+  )
+)
+
+# ---- BFGS ---- 
+fitBFGS_full$value
+fitBFGS_full$convergence
+fitBFGS_full$par
+```
+
+```{r}
+fitBFGS_no_bias = optim(
+  par = theta_start0,
+  fn = neg_loglik_no_bias,
+  data = Ca2_data,
+  h = 0.02,
+  method = "L-BFGS-B",
+  lower = c(
+    eta = 1e-8,
+    a = -Inf,
+    b = -Inf,
+    c = -Inf,
+    d = -Inf,
+    gamma = 200
+  ),
+  upper = c(
+    eta = Inf,
+    a = -1e-8,
+    b = Inf,
+    c = Inf,
+    d = Inf,
+    gamma = Inf
+  )
+)
+
+# ---- BFGS ---- 
+fitBFGS_no_bias$value
+fitBFGS_no_bias$convergence
+fitBFGS_no_bias$par
+```
+
+# M1 - constant diffusion, b=d=0
+
+## Likelihood
+
+### Rough
+
+```{r}
+neg_loglik1 = function(theta, data, h) {
+  
+  # ---- sort data ---- 
+  data_old = data[-nrow(data), ]
+  data_new = data[-1, ]
+  n = nrow(data_old)
+  
+  # ---- Moments ---- 
+  X_old = data_old[,1]
+  Xexp  = mean(X_old)
+  Xexp2 = mean(X_old^2)
+  varX  = var(X_old)
+
+  #---- theta ----
+  eta   = theta[1]
+  a     = theta[2]
+  c     = theta[3]
+  gamma = theta[4]
+  b = 0 
+  d = 0
+  
+  drift_const = 3 * a * Xexp2 + 2 * b * Xexp + c
+
+  A = matrix(c(0, 1,
+                drift_const, -eta),
+              nrow = 2, byrow = TRUE)
+  
+  # ---- B ----
+  inside_sqrt = varX + (Xexp + b / (3 * a))^2
+
+  bxPlus = -b / (3 * a) + sqrt(inside_sqrt)
+  bxMinus = -b / (3 * a) - sqrt(inside_sqrt)
+
+  B = cbind(ifelse(X_old > 0, bxPlus, bxMinus),0)
+
+  # ---- f ---- 
+  f_step = function(df, h) {
+        
+        X = df[,1]
+        V = df[,2]
+        
+        NonLin =
+            a * X^3 +
+            b * X^2 +
+            c * X +
+            d -
+            drift_const * (X -  B[, 1])
+        
+        out = cbind(
+            X,
+            V + h * NonLin
+        )
+        
+        return(out)
+    }
+  
+  # ---- Mu Step ---- 
+  mu_step = function(Y, df) {
+        
+        expAh = expm(A * h)
+
+        mu = as.matrix(Y - B) %*% t(expAh) + B
+        
+        return(mu)
+  }
+  
+  # ---- Residual ---- 
+  Y_old_half = f_step(data_old, h = 1/2*h)
+  Y_new_inv  = f_step(data_new, h = -1/2*h)
+    
+  Y_mu = mu_step(Y_old_half, data_old)
+    
+  Z = Y_new_inv - Y_mu
+    
+  # ---- Constant diffusion covariance ----
+  Sigma = matrix(
+      c(0, 0,
+        0, gamma),
+      nrow = 2,
+      byrow = TRUE
+    )
+    
+   M = rbind(
+       cbind(A, Sigma),
+       cbind(matrix(0, 2, 2), -t(A))
+    )
+   
+  R = expm(M * h)
+    
+  RBias = expm(M*(3/2)*h)
+  
+  I = R[1:2, 3:4]
+  F1 = R[1:2, 1:2]
+    
+  Omega = I %*% t(F1)
+  
+  # FULL 
+   
+  # OmegaBias =  RBias[1:2, 3:4] %*% t(RBias[1:2, 1:2])
+  # 
+  # omega_inv = solve(Omega)
+  #   
+  # log_det = as.numeric(determinant(OmegaBias, logarithm = TRUE)$modulus)
+  #   
+  # first = Z[,1]^2 * omega_inv[1, 1] +
+  #   2 * Z[,1] * Z[,2] * omega_inv[1, 2] +
+  #   Z[,2]^2 * omega_inv[2, 2] 
+  # 
+  #   
+  # val = sum(first) + n*(4/3*log_det)
+    
+  # Rough
+  
+  OmegaBias = (RBias[1:2, 3:4] %*% t(RBias[1:2, 1:2]))[2,2]
+
+  #omega_inv = solve(Omega)
+    
+  # log_det = as.numeric(determinant(OmegaBias, logarithm = TRUE)$modulus)
+  
+  log_det = log(OmegaBias)
+    
+  # first = Z[,1]^2 * omega_inv[1, 1] +
+  #   2 * Z[,1] * Z[,2] * omega_inv[1, 2] +
+  #   Z[,2]^2 * omega_inv[2, 2] 
+  
+  first = Z[,2]^2 * 1/(Omega[2, 2])
+
+  val = sum(first) + n*(2/3*log_det)
+  
+ return(val)
+ }
+
+```
+
+## Optimize
+
+```{r}
+theta_start1 = c(
+  eta = 60,
+  a = -130,   
+  c = 115,
+  gamma = 8000 
+)
+
+# ---- BFGS ---- 
+fitBFGS1 = optim(
+  par = theta_start1,
+  fn = neg_loglik1,
+  data = Ca2_data,
+  h = 0.02,
+  method = "L-BFGS-B",
+  lower = c(
+    eta = 1e-8,
+    a = -Inf,
+    c = -Inf,
+    gamma = 200
+  ),
+  upper = c(
+    eta = Inf,
+    a = -1e-8,
+    c = Inf,
+    gamma = Inf
+  )
+)
+
+fitBFGS1$value
+fitBFGS1$convergence
+fitBFGS1$par
+```
+
+# M2 - non-constant diffusion, full
+
+## Likelihood
+
+```{r}
+neg_loglik2 = function(theta, data, h) {
+  
+  # ---- sort data ---- 
+  data_old = data[-nrow(data), ]
+  data_new = data[-1, ]
+  n = nrow(data_old)
+  
+  # ---- Moments ---- 
+  X_old = data_old[,1]
+  Xexp  = mean(X_old)
+  Xexp2 = mean(X_old^2)
+  varX  = var(X_old)
+
+  #---- theta ----
+  eta   = theta[1]
+  a     = theta[2]
+  b     = theta[3]
+  c     = theta[4]
+  d     = theta[5]
+  alpha = theta[6]
+  beta = theta[7]
+  gamma = theta[8]
+  
+  drift_const = 3 * a * Xexp2 + 2 * b * Xexp + c
+
+  A = matrix(c(0, 1,
+                drift_const, -eta),
+              nrow = 2, byrow = TRUE)
+  
+  # ---- B ----
+  inside_sqrt = varX + (Xexp + b / (3 * a))^2
+
+  bxPlus = -b / (3 * a) + sqrt(inside_sqrt)
+  bxMinus = -b / (3 * a) - sqrt(inside_sqrt)
+
+  B = cbind(ifelse(X_old > 0, bxPlus, bxMinus),0)
+  
+  # ---- f ----
+  f_step = function(df, h) {
+
+        X = df[,1]
+        V = df[,2]
+
+        NonLin =
+            a * X^3 +
+            b * X^2 +
+            c * X +
+            d -
+            drift_const * (X - B[, 1])
+
+        out = cbind(
+            X,
+            V + h * NonLin
+        )
+
+        return(out)
+    }
+
+  # ---- Mu Step ----
+  mu_step = function(Y, df, h) {
+
+        expAh = expm(A * h)
+
+        mu = as.matrix(Y - B) %*% t(expAh) + B
+
+        return(mu)
+  }
+
+  # ---- Residual ---- 
+  Y_old_half = f_step(data_old, h = 1/2*h) 
+  Y_new_inv  = f_step(data_new, h = -1/2*h)
+    
+  Y_mu = mu_step(Y_old_half, data_old, h)
+    
+  Z = Y_new_inv - Y_mu
+  
+  # ---- Constant diffusion covariance ----
+    
+  first = numeric(nrow(data_old))
+  det = numeric(nrow(data_old))
+  
+  alphaCheck = rbind(cbind(matrix(0, 2, 2), matrix(0, 2, 2)),
+                     cbind(matrix(0, 2, 2), matrix(c(0,0,0,alpha), 
+                                                   nrow=2, byrow=TRUE)))
+  betaCheck = rbind(matrix(0, 2, 2), 
+                    matrix(c(0,0,0,beta), nrow=2, byrow=TRUE))
+
+  # ---- Kronecker ---- 
+  
+  I = diag(2)
+
+  K = I %x% A + A %x% I
+  
+  IA = I %x% A
+  AI = A %x% I
+  
+  Kalpha = K + alphaCheck
+    
+  # ---- Integrals ---- 
+  
+  M1 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), K))
+  I1 = expm(M1*h)[1:4, 5:8]
+  I1Bias = expm(M1*(3/2)*h)[1:4, 5:8]
+
+  M2 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), IA))
+  I2 = expm(M2*h)[1:4, 5:8]
+  I2Bias = expm(M2*(3/2)*h)[1:4, 5:8]
+
+  M3 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), AI))
+  I3 = expm(M3*h)[1:4, 5:8]
+  I3Bias = expm(M3*(3/2)*h)[1:4, 5:8]
+
+  M4 = rbind(cbind(Kalpha, betaCheck),
+               cbind(matrix(0, 2, 4), A)) 
+  I4 = expm(M4*h)[1:4, 5:6]
+  I4Bias = expm(M4*(3/2)*h)[1:4, 5:6]
+
+  M5 = rbind( cbind(Kalpha, diag(4)),
+               cbind(matrix(0, 4, 4), matrix(0, 4, 4)))
+
+  I5 = expm(M5 * h)[1:4, 5:8]
+  I5Bias = expm(M5*(3/2)*h)[1:4, 5:8]
+  
+  # ---- Omega ---- 
+  for (i in 1:nrow(data_old)) {
+    Sigma = matrix(
+      c(0, 0,
+        0, alpha*data_old[i,2]^2+beta*data_old[i,2]+gamma),
+      nrow = 2,
+      byrow = TRUE
+    )
+    
+    xb = Y_old_half[i,]-B[i,]
+    
+    omegaVector = I1 %*% c(xb[1]^2, xb[1]*xb[2], xb[2]*xb[1], xb[2]^2) + 
+      I2 %*% c(xb[1]*B[i,1], xb[1]*B[i,2], xb[2]*B[i,1], xb[2]*B[i,2]) + 
+      I3 %*% c(B[i,1]*xb[1], B[i,1]*xb[2], B[i,2]*xb[1], B[i,2]*xb[2]) +
+      I4 %*% xb +
+      I5 %*% c(Sigma[1,1], Sigma[1,2], Sigma[2,1], Sigma[2,2])
+
+    omegaVectorBias = I1Bias %*% c(xb[1]^2, xb[1]*xb[2], xb[2]*xb[1], xb[2]^2) + 
+      I2Bias %*% c(xb[1]*B[i,1], xb[1]*B[i,2], xb[2]*B[i,1], xb[2]*B[i,2]) + 
+      I3Bias %*% c(B[i,1]*xb[1], B[i,1]*xb[2], B[i,2]*xb[1], B[i,2]*xb[2]) +
+      I4Bias %*% xb +
+      I5Bias %*% c(Sigma[1,1], Sigma[1,2], Sigma[2,1], Sigma[2,2])
+
+    # ---- Rough ----
+    
+    omega22Bias = as.numeric(omegaVectorBias[4])
+    omega22     = as.numeric(omegaVector[4])
+
+    det[i] = log(omega22Bias)
+    first[i] = Z[i, 2]^2 / omega22
+    
+    # det[i] = log(omegaVectorBias[4])
+    # 
+    # first[i] = Z[i,2]^2 *(1/omegaVector[4])
+    
+    # ---- Full ----
+    
+    # omega = matrix(omegaVector,2,2)
+    # omega_inv = solve(omega)
+    # det[i] = log(det(omegaVectorBias))
+    # first[i] = Z[i,1]^2 * omega_inv[1, 1] +
+    # 2 * Z[i,1] * Z[i,2] * omega_inv[1, 2] +
+    # Z[i,2]^2 * omega_inv[2, 2] 
+  }
+    
+  val = sum(first) + sum((2/3)*det)
+    
+  return(val)
+  }
+```
+
+```{r, eval = FALSE}
+# ---- Starting parameters ----
+  eta = 60
+  a = -130   
+  b = 0
+  c = 115
+  d = 0
+  alpha = 50
+  beta = 200
+  gamma = 8000 
+  
+  # ---- sort data ---- 
+  data_old = Ca2_data[-nrow(Ca2_data), ]
+  data_new = Ca2_data[-1, ]
+  n = nrow(data_old)
+  
+  # ---- Moments ---- #  
+  X_old = data_old[,1]
+  Xexp  = mean(X_old)
+  Xexp2 = mean(X_old^2)
+  varX  = var(X_old)
+  
+  drift_const = 3 * a * Xexp2 + 2 * b * Xexp + c
+
+  A = matrix(c(0, 1,
+                drift_const, -eta),
+              nrow = 2, byrow = TRUE)
+  
+  # ---- B ----
+  inside_sqrt = varX + (Xexp + b / (3 * a))^2
+
+  bxPlus = -b / (3 * a) + sqrt(inside_sqrt)
+  bxMinus = -b / (3 * a) - sqrt(inside_sqrt)
+
+  B = cbind(ifelse(X_old > 0, bxPlus, bxMinus),0)
+  
+  # ---- f ---- 
+  f_step = function(df, h) {
+        
+        X = df[,1]
+        V = df[,2]
+        
+        NonLin =
+            a * X^3 +
+            b * X^2 +
+            c * X +
+            d -
+            drift_const * (X -  B[, 1])
+        
+        out = cbind(
+            X,
+            V + h * NonLin
+        )
+  
+        return(out)
+    }
+  
+ # ---- Mu Step ----
+  mu_step = function(Y, df, h) {
+
+        expAh = expm(A * h)
+
+        mu = as.matrix(Y - B) %*% t(expAh) + B
+
+        return(mu)
+  }
+
+  # ---- Residual ---- 
+  Y_old_half = f_step(data_old, h = 1/2*h) 
+  Y_new_inv  = f_step(data_new, h = -1/2*h)
+    
+  Y_mu = mu_step(Y_old_half, data_old, h)
+    
+  Z = Y_new_inv - Y_mu
+  
+  # ---- Constant diffusion covariance ----
+  
+  alphaCheck = rbind(cbind(matrix(0, 2, 2), matrix(0, 2, 2)),
+                     cbind(matrix(0, 2, 2), matrix(c(0,0,0,alpha), 
+                                                   nrow=2, byrow=TRUE)))
+  betaCheck = rbind(matrix(0, 2, 2), 
+                    matrix(c(0,0,0,beta), nrow=2, byrow=TRUE))
+
+  
+  # ---- Kronecker ---- 
+  
+  I = diag(2)
+
+  K = I %x% A + A %x% I
+  
+  IA = I %x% A
+  AI = A %x% I
+  
+  Kalpha = K + alphaCheck
+  # ---- Integrals ---- 
+  
+  M1 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), K))
+  I1 = expm(M1*h)[1:4, 5:8]
+  I1Bias = expm(M1*(3/2)*h)[1:4, 5:8]
+
+  M2 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), IA))
+  I2 = expm(M2*h)[1:4, 5:8]
+  I2Bias = expm(M2*(3/2)*h)[1:4, 5:8]
+
+  M3 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), AI))
+  I3 = expm(M3*h)[1:4, 5:8]
+  I3Bias = expm(M3*(3/2)*h)[1:4, 5:8]
+
+  M4 = rbind(cbind(Kalpha, betaCheck),
+               cbind(matrix(0, 2, 4), A)) 
+  I4 = expm(M4*h)[1:4, 5:6]
+  I4Bias = expm(M4*(3/2)*h)[1:4, 5:6]
+
+  M5 = rbind( cbind(Kalpha, diag(4)),
+               cbind(matrix(0, 4, 4), matrix(0, 4, 4)))
+
+  I5 = expm(M5 * h)[1:4, 5:8]
+  I5Bias = expm(M5*(3/2)*h)[1:4, 5:8]
+
+  # ---- Omega ---- 
+      
+  first = numeric(nrow(data_old))
+  det = numeric(nrow(data_old))
+  
+  for (i in 1:nrow(data_old)) {
+    Sigma = matrix(
+      c(0, 0,
+        0, alpha*data_old[i,2]^2+beta*data_old[i,2]+gamma),
+      nrow = 2,
+      byrow = TRUE
+    )
+    
+    xb = Y_old_half[i,]-B[i,]
+    
+    omegaVector = I1 %*% as.vector(xb %*% t(xb)) +
+      I2 %*% as.vector(xb%*% t(B[i,])) +
+      I3 %*% as.vector(B[i,]%*%t(xb)) +
+      I4 %*% as.vector(xb) +
+      I5 %*% as.vector(Sigma)
+
+    omegaVectorBias = I1Bias %*% as.vector(xb %*% t(xb)) +
+      I2Bias %*% as.vector(xb%*% t(B[i,])) +
+      I3Bias %*% as.vector(B[i,]%*%t(xb)) +
+      I4Bias %*% as.vector(xb) +
+      I5Bias %*% as.vector(Sigma)
+
+    # ---- Rough ----
+    det[i] = log(omegaVectorBias[4])
+  
+    first[i] = Z[i,2]^2 *(1/omegaVector[4])
+    
+    # ---- Full ----
+    
+    # omega = matrix(omegaVector,2,2)
+    # omega_inv = solve(omega)
+    # det[i] = log(det(omegaVectorBias))
+    # first[i] = Z[i,1]^2 * omega_inv[1, 1] +
+    # 2 * Z[i,1] * Z[i,2] * omega_inv[1, 2] +
+    # Z[i,2]^2 * omega_inv[2, 2] 
+  }
+    
+  val = sum(first) + sum((2/3)*det)
+```
+
+## Optimize
+
+```{r}
+# ---- Starting parameter ----
+theta_start2 = c(
+  eta = 60,
+  a = -130,   
+  b = 0,
+  c = 115,
+  d = 0,
+  alpha = 50,
+  beta = 200,
+  gamma = 8000 
+)
+
+# ---- Optimizer -----
+fitBFGS2 = optim(
+  par = theta_start2,
+  fn = neg_loglik2,
+  data = Ca2_data,
+  h = 0.02,
+  method = "L-BFGS-B",
+  lower = c(
+    eta   = 1,
+    a     = -Inf,
+    b     = -Inf,
+    c     = -Inf,
+    d     = -Inf,
+    alpha = 1e-8,
+    beta  = -Inf,
+    gamma = 1e-8), 
+  upper = c(
+    eta   = Inf,
+    a     = -1e-8,
+    b     = Inf,
+    c     = Inf,
+    d     = Inf,
+    alpha = Inf,
+    beta  = Inf,
+    gamma = Inf)
+)
+
+# ---- Fit ---- 
+fitBFGS2$par
+fitBFGS2$value
+fitBFGS2$convergence
+```
+
+# M3 - non-constant diffusion, b=d=0
+
+## Likelihood
+
+```{r}
+neg_loglik3 = function(theta, data, h) {
+  
+  # ---- sort data ---- 
+  data_old = data[-nrow(data), ]
+  data_new = data[-1, ]
+  n = nrow(data_old)
+  
+  # ---- Moments ---- 
+  X_old = data_old[,1]
+  Xexp  = mean(X_old)
+  Xexp2 = mean(X_old^2)
+  varX  = var(X_old)
+
+  #---- theta ----
+  eta   = theta[1]
+  a     = theta[2]
+  b     = 0
+  c     = theta[3]
+  d     = 0
+  alpha = theta[4]
+  beta = theta[5]
+  gamma = theta[6]
+  
+  drift_const = 3 * a * Xexp2 + 2 * b * Xexp + c
+
+  A = matrix(c(0, 1,
+                drift_const, -eta),
+              nrow = 2, byrow = TRUE)
+  
+  # ---- B ----
+  inside_sqrt = varX + (Xexp + b / (3 * a))^2
+
+  bxPlus = -b / (3 * a) + sqrt(inside_sqrt)
+  bxMinus = -b / (3 * a) - sqrt(inside_sqrt)
+
+  B = cbind(ifelse(X_old > 0, bxPlus, bxMinus),0)
+  
+  # ---- f ----
+  f_step = function(df, h) {
+
+        X = df[,1]
+        V = df[,2]
+
+        NonLin =
+            a * X^3 +
+            b * X^2 +
+            c * X +
+            d -
+            drift_const * (X - B[, 1])
+
+        out = cbind(
+            X,
+            V + h * NonLin
+        )
+
+        return(out)
+    }
+
+  # ---- Mu Step ----
+  mu_step = function(Y, df, h) {
+
+        expAh = expm(A * h)
+
+        mu = as.matrix(Y - B) %*% t(expAh) + B
+
+        return(mu)
+  }
+
+  # ---- Residual ---- 
+  Y_old_half = f_step(data_old, h = 1/2*h) 
+  Y_new_inv  = f_step(data_new, h = -1/2*h)
+    
+  Y_mu = mu_step(Y_old_half, data_old, h)
+    
+  Z = Y_new_inv - Y_mu
+  
+  # ---- Constant diffusion covariance ----
+    
+  first = numeric(nrow(data_old))
+  det = numeric(nrow(data_old))
+  
+  alphaCheck = rbind(cbind(matrix(0, 2, 2), matrix(0, 2, 2)),
+                     cbind(matrix(0, 2, 2), matrix(c(0,0,0,alpha), 
+                                                   nrow=2, byrow=TRUE)))
+  betaCheck = rbind(matrix(0, 2, 2), 
+                    matrix(c(0,0,0,beta), nrow=2, byrow=TRUE))
+
+  # ---- Kronecker ---- 
+  
+  I = diag(2)
+
+  K = I %x% A + A %x% I
+  
+  IA = I %x% A
+  AI = A %x% I
+  
+  Kalpha = K + alphaCheck
+    
+  # ---- Integrals ---- 
+  
+  M1 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), K))
+  I1 = expm(M1*h)[1:4, 5:8]
+  I1Bias = expm(M1*(3/2)*h)[1:4, 5:8]
+
+  M2 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), IA))
+  I2 = expm(M2*h)[1:4, 5:8]
+  I2Bias = expm(M2*(3/2)*h)[1:4, 5:8]
+
+  M3 = rbind(cbind(Kalpha, alphaCheck),
+               cbind(matrix(0, 4, 4), AI))
+  I3 = expm(M3*h)[1:4, 5:8]
+  I3Bias = expm(M3*(3/2)*h)[1:4, 5:8]
+
+  M4 = rbind(cbind(Kalpha, betaCheck),
+               cbind(matrix(0, 2, 4), A)) 
+  I4 = expm(M4*h)[1:4, 5:6]
+  I4Bias = expm(M4*(3/2)*h)[1:4, 5:6]
+
+  M5 = rbind( cbind(Kalpha, diag(4)),
+               cbind(matrix(0, 4, 4), matrix(0, 4, 4)))
+
+  I5 = expm(M5 * h)[1:4, 5:8]
+  I5Bias = expm(M5*(3/2)*h)[1:4, 5:8]
+  
+  # ---- Omega ---- 
+  for (i in 1:nrow(data_old)) {
+    Sigma = matrix(
+      c(0, 0,
+        0, alpha*data_old[i,2]^2+beta*data_old[i,2]+gamma),
+      nrow = 2,
+      byrow = TRUE
+    )
+    
+    xb = Y_old_half[i,]-B[i,]
+    
+    omegaVector = I1 %*% c(xb[1]^2, xb[1]*xb[2], xb[2]*xb[1], xb[2]^2) + 
+      I2 %*% c(xb[1]*B[i,1], xb[1]*B[i,2], xb[2]*B[i,1], xb[2]*B[i,2]) + 
+      I3 %*% c(B[i,1]*xb[1], B[i,1]*xb[2], B[i,2]*xb[1], B[i,2]*xb[2]) +
+      I4 %*% xb +
+      I5 %*% c(Sigma[1,1], Sigma[1,2], Sigma[2,1], Sigma[2,2])
+
+    omegaVectorBias = I1Bias %*% c(xb[1]^2, xb[1]*xb[2], xb[2]*xb[1], xb[2]^2) + 
+      I2Bias %*% c(xb[1]*B[i,1], xb[1]*B[i,2], xb[2]*B[i,1], xb[2]*B[i,2]) + 
+      I3Bias %*% c(B[i,1]*xb[1], B[i,1]*xb[2], B[i,2]*xb[1], B[i,2]*xb[2]) +
+      I4Bias %*% xb +
+      I5Bias %*% c(Sigma[1,1], Sigma[1,2], Sigma[2,1], Sigma[2,2])
+
+    # ---- Rough ----
+    
+    omega22Bias = as.numeric(omegaVectorBias[4])
+    omega22     = as.numeric(omegaVector[4])
+
+    det[i] = log(omega22Bias)
+    first[i] = Z[i, 2]^2 / omega22
+    
+    # det[i] = log(omegaVectorBias[4])
+    # 
+    # first[i] = Z[i,2]^2 *(1/omegaVector[4])
+    
+    # ---- Full ----
+    
+    # omega = matrix(omegaVector,2,2)
+    # omega_inv = solve(omega)
+    # det[i] = log(det(omegaVectorBias))
+    # first[i] = Z[i,1]^2 * omega_inv[1, 1] +
+    # 2 * Z[i,1] * Z[i,2] * omega_inv[1, 2] +
+    # Z[i,2]^2 * omega_inv[2, 2] 
+  }
+    
+  val = sum(first) + sum((2/3)*det)
+    
+  return(val)
+  }
+```
+
+## Optimize
+
+```{r}
+# ---- Starting parameter ----
+theta_start3 = c(
+  eta = 60,
+  a = -130,  
+  c = 115,
+  alpha = 50,
+  beta = 200,
+  gamma = 8000 
+)
+
+# ---- Optimizer -----
+fitBFGS3 = optim(
+  par = theta_start3,
+  fn = neg_loglik3,
+  data = Ca2_data,
+  h = 0.02,
+  method = "L-BFGS-B",
+  lower = c(
+    eta   = 1,
+    a     = -Inf,
+    c     = -Inf,
+    alpha = 1e-8,
+    beta  = -Inf,
+    gamma = 1e-8), 
+  upper = c(
+    eta   = Inf,
+    a     = -1e-8,
+    c     = Inf,
+    alpha = Inf,
+    beta  = Inf,
+    gamma = Inf)
+)
+
+# ---- Fit ---- 
+fitBFGS3$par
+fitBFGS3$value
+fitBFGS3$convergence
+```
+
+# Simulated Paths
+
+## M0 for simulated paths
+
+```{r}
+#theta = fitNM$par
+theta = fitBFGS$par
+
+eta   = theta["eta"]
+a     = theta["a"]
+b     = theta["b"]
+c     = theta["c"]
+d     = theta["d"]
+gamma = theta["gamma"]
+
+set.seed(16)
+
+h = 0.0001
+n = 500000
+
+SimValues = data.frame(age = numeric(n),
+                     X = numeric(n), 
+                     V = numeric(n))
+SimValues$age[1]=80.02
+SimValues$X[1]=1.11
+SimValues$V[1]=5.43
+
+
+for (i in 2:n){
+  SimValues$age[i]=SimValues$age[i - 1]-h
+  X_prev = SimValues$X[i - 1]
+  V_prev = SimValues$V[i - 1]
+  SimValues$X[i]=X_prev + h*V_prev
+  SimValues$V[i]=V_prev+
+    h*(-eta*V_prev+a*X_prev^3+b*X_prev^2+c*X_prev+d)+sqrt(h)*sqrt(gamma)*rnorm(1)
+}
+
+SimData = SimValues[seq(1, nrow(SimValues), by = 200), ]
+
+```
+
+### Plots
+
+```{r}
+# ---- Plot of simulated data ---- (ALSO ADD DENSITY PLOT)
+SimPlot1 = ggplot(SimData, aes(x = age, y = X)) +
+    geom_line(linewidth = 0.7) +
+    labs(
+        title = "Simulated X",
+        x = "Age (kiloyears before present)",
+        y = expression(X[t])
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        panel.grid.minor = element_blank()
+    ) +
+    scale_x_reverse()
+
+SimPlot2 = ggplot(SimData, aes(x = age, y = V)) +
+    geom_line(linewidth = 0.7) +
+    labs(
+        title = "Simulated V",
+        x = "Age (kiloyears before present)",
+        y = expression(V[t])
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        panel.grid.minor = element_blank()
+    ) +
+    scale_x_reverse()
+grid.arrange(SimPlot1,SimPlot2, ncol = 1)
+```
+
+```{r}
+# ---- Simulated paths on real data ----
+RealSimX = ggplot(Ca2_final, aes(x = age, y = X)) +
+  geom_line(linewidth = 0.7) +
+  labs(
+    title = expression("Ice Land Core Greenland: X[t] =-log(Ca"^{"2+"}*"))"),
+    x = "Age (kiloyears before present)",
+    y = expression(X[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank() 
+  ) +
+  scale_x_reverse() +
+  geom_line(
+    data = SimData,
+    aes(x = age, y = X),
+    linewidth = 0.7,
+    linetype = "dashed", 
+    color = 'darkred'
+  )
+
+RealSimV =  ggplot(Ca2_final, aes(x = age, y = V)) +
+  geom_line(linewidth = 0.7) +
+  labs(
+    title = "Estimated Velocity Process",
+    x = "Age (kiloyears before present)",
+    y = expression(V[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_reverse() + 
+  geom_line(
+    data = SimData,
+    aes(x = age, y = V),
+    linewidth = 0.7,
+    linetype = "dashed", 
+    color = 'darkred'
+  )
+
+grid.arrange(RealSimX,RealSimV, ncol = 1)
+```
+
+```{r}
+DensitySimX = ggplot(Ca2_final, aes(x =X)) +
+  geom_density(linewidth = 0.7) +
+  labs(
+    title = "Density",
+    x = "Age (kiloyears before present)",
+    y = expression(V[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_reverse() +
+  geom_density(
+    data = SimData,
+    aes(x = X),
+    linewidth = 0.7,
+    linetype = "dashed", 
+    color = 'darkred'
+  ) 
+
+DensitySimV = ggplot(Ca2_final, aes(x =V)) +
+  geom_density(linewidth = 0.7) +
+  labs(
+    title = "Density",
+    x = "Age (kiloyears before present)",
+    y = expression(V[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_reverse() +
+  geom_density(
+    data = SimData,
+    aes(x = V),
+    linewidth = 0.7,
+    linetype = "dashed", 
+    color = 'darkred'
+  )
+
+grid.arrange(DensitySimX,DensitySimV, ncol = 1)
+```
+
+```{r}
+p_dens_X = ggplot() +
+  geom_density(
+    data = SimMany,
+    aes(y = X, x = after_stat(density), group = sim_id),
+    color = "firebrick",
+    alpha = 0.10,
+    linewidth = 0.4
+  ) +
+  geom_density(
+    data = Ca2_final,
+    aes(y = X, x = after_stat(density)),
+    color = "black",
+    linewidth = 1
+  ) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+
+base_theme = theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+# ---- X_t over time ----
+RealSimX = ggplot(Ca2_final, aes(x = age, y = X)) +
+  geom_line(linewidth = 0.7) +
+  geom_line(
+    data = SimData2,
+    aes(x = age, y = X),
+    linewidth = 0.7,
+    linetype = "dashed",
+    colour = "darkred"
+  ) +
+  labs(
+    title = expression(X[t]),
+    x = NULL,
+    y = expression(X[t])
+  ) +
+  scale_x_reverse() +
+  base_theme +
+  theme(
+    axis.title.x = element_blank(),
+    plot.margin = margin(5.5, 5.5, 2, 5.5)
+  )
+
+# ---- V_t over time ----
+RealSimV = ggplot(Ca2_final, aes(x = age, y = V)) +
+  geom_line(linewidth = 0.7) +
+  geom_line(
+    data = SimData2,
+    aes(x = age, y = V),
+    linewidth = 0.7,
+    linetype = "dashed",
+    colour = "darkred"
+  ) +
+  labs(
+    title = expression(V[t]),
+    x = "Age (kiloyears before present)",
+    y = expression(V[t])
+  ) +
+  scale_x_reverse() +
+  base_theme +
+  theme(
+    plot.margin = margin(2, 5.5, 5.5, 5.5)
+  )
+
+# ---- Density of X_t ----
+DensitySimX = ggplot() +
+  geom_density(
+    data = Ca2_final,
+    aes(x = X),
+    linewidth = 0.7,
+    colour = "black"
+  ) +
+  geom_density(
+    data = SimData2,
+    aes(x = X),
+    linewidth = 0.7,
+    linetype = "dashed",
+    colour = "darkred",
+    fill = "darkred",
+    alpha = 0.25
+  ) +
+  coord_flip() +
+  labs(
+    title = "Density",
+    x = NULL,
+    y = NULL
+  ) +
+  base_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title = element_blank(),
+    plot.margin = margin(5.5, 5.5, 2, 2)
+  )
+
+# ---- Density of V_t ----
+DensitySimV = ggplot() +
+  geom_density(
+    data = Ca2_final,
+    aes(x = V),
+    linewidth = 0.7,
+    colour = "black"
+  ) +
+  geom_density(
+    data = SimData2,
+    aes(x = V),
+    linewidth = 0.7,
+    linetype = "dashed",
+    colour = "darkred",
+    fill = "darkred",
+    alpha = 0.25
+  ) +
+  coord_flip() +
+  labs(
+    title = NULL,
+    x = NULL,
+    y = NULL
+  ) +
+  base_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    plot.margin = margin(2, 5.5, 5.5, 2)
+  )
+
+# ---- Combine ----
+((RealSimX | DensitySimX) / (RealSimV | DensitySimV)) +
+  plot_layout(widths = c(2, 1), heights = c(1, 1)) +
+  plot_annotation(
+    title = "Greenland Ice-Core Data and Simulated Paths for Model 2: Non-constant Diffusion",
+    theme = theme(
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14)
+    )
+  )
+```
+
+```{r}
+# ----Refit ----
+  fit_bootSIM = optim(
+    par = theta_start,
+    fn = neg_loglik,
+    data = SimData,
+    h = 0.02,
+    method = "L-BFGS-B",
+    lower = c(
+        eta = 1,
+        a = -Inf,
+        b = -Inf,
+        c = -Inf,
+        d = -Inf,
+        gamma = 1e-8),
+  upper = c(
+        eta = Inf,
+        a = -1e-8,
+        b = Inf,
+        c = Inf,
+        d = Inf,
+        gamma = Inf)
+  )
+```
+
+## M2 simulated path
+
+```{r}
+theta2 = fitBFGS2$par
+
+eta   = theta2["eta"]
+a     = theta2["a"]
+b     = theta2["b"]
+c     = theta2["c"]
+d     = theta2["d"]
+alpha = theta2['alpha']
+beta = theta2['beta']
+gamma = theta["gamma"]
+
+set.seed(16)
+
+h = 0.0001
+n = 500000
+
+SimValues2 = data.frame(age = numeric(n),
+                     X = numeric(n), 
+                     V = numeric(n))
+SimValues2$age[1]=80.02
+SimValues2$X[1]=1.11
+SimValues2$V[1]=5.43
+
+
+for (i in 2:n){
+  SimValues2$age[i]=SimValues2$age[i - 1]-h
+  X_prev = SimValues2$X[i - 1]
+  V_prev = SimValues2$V[i - 1]
+  SimValues2$X[i]=X_prev + h*V_prev
+  SimValues2$V[i]=V_prev+
+    h*(-eta*V_prev+a*X_prev^3+b*X_prev^2+c*X_prev+d)+sqrt(h)*sqrt(alpha*V_prev^2+beta*V_prev+gamma)*rnorm(1)
+}
+
+SimData2 = SimValues2[seq(1, nrow(SimValues2), by = 200), ]
+```
+
+### Plots
+
+```{r}
+# ---- Plot of simulated data ---- (ALSO ADD DENSITY PLOT)
+SimPlotX2 = ggplot(SimData2, aes(x = age, y = X)) +
+    geom_line(linewidth = 0.7) +
+    labs(
+        title = "Simulated X",
+        x = "Age (kiloyears before present)",
+        y = expression(X[t])
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        panel.grid.minor = element_blank()
+    ) +
+    scale_x_reverse()
+
+SimPlotV2 = ggplot(SimData2, aes(x = age, y = V)) +
+    geom_line(linewidth = 0.7) +
+    labs(
+        title = "Simulated V",
+        x = "Age (kiloyears before present)",
+        y = expression(V[t])
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        panel.grid.minor = element_blank()
+    ) +
+    scale_x_reverse()
+grid.arrange(SimPlotX2,SimPlotV2, ncol = 1)
+```
+
+```{r}
+# ---- Simulated paths on real data ----
+RealSimX2 = ggplot(Ca2_final, aes(x = age, y = X)) +
+  geom_line(linewidth = 0.7) +
+  labs(
+    title = expression("Ice Land Core Greenland: X[t] =-log(Ca"^{"2+"}*"))"),
+    x = "Age (kiloyears before present)",
+    y = expression(X[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank() 
+  ) +
+  scale_x_reverse() +
+  geom_line(
+    data = SimData2,
+    aes(x = age, y = X),
+    linewidth = 0.7,
+    linetype = "dashed", 
+    color = 'darkred'
+  )
+
+RealSimV2 =  ggplot(Ca2_final, aes(x = age, y = V)) +
+  geom_line(linewidth = 0.7) +
+  labs(
+    title = "Estimated Velocity Process",
+    x = "Age (kiloyears before present)",
+    y = expression(V[t])
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_reverse() + 
+  geom_line(
+    data = SimData2,
+    aes(x = age, y = V),
+    linewidth = 0.7,
+    linetype = "dashed", 
+    color = 'darkred'
+  )
+
+grid.arrange(RealSimX2,RealSimV2, ncol = 1)
+```
+
+```{r}
+# ---- Reorder for overview + plots ----
+SimParameters_clean = BootParameters0[complete.cases(BootParameters0), 1:6 ]
+
+boot_se = apply(SimParameters_clean, 2, sd)
+boot_mean = apply(SimParameters_clean, 2, mean)
+
+boot_ci = apply(
+  SimParameters_clean,
+  2,
+  quantile,
+  probs = c(0.025, 0.975)
+)
+
+boot_bias = colMeans(SimParameters_clean) - theta_hat
+
+# ---- Plotting simulation (Bootstrap) results ----
+SimParametersClean_long = SimParameters_clean %>% 
+  pivot_longer(
+    cols = everything(),
+    names_to = "parameter",
+    values_to = "estimate"
+  )
+
+fit_values = tibble(
+  parameter = names(fitBFGS$par),
+  fit = as.numeric(fitBFGS$par)
+)
+
+# Density plot with fitted values as vertical lines
+ggplot(SimParametersClean_long, aes(x = estimate)) +
+  geom_density(fill = "gray80", color = "black") +
+  geom_vline(data = fit_values, aes(xintercept = fit), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(~ parameter, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Density of Simulated Parameters with MLEs", x = "Estimate", y = "Density")
+
+# Histogram plot with fitted values as vertical lines
+ggplot(SimParametersClean_long, aes(x = estimate)) +
+  geom_histogram(bins = 5, fill = "gray80", color = "black") +
+  geom_vline(data = fit_values, aes(xintercept = fit), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(~ parameter, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Histogram of Simulated Parameters with MLEs", x = "Estimate", y = "Count")
+```
+
+# Bootstrap Simulations
+
+```{r}
+
+# ---- Simulate Model 0 ----
+SimulateModel0_sub = function(theta, h_sim, n_data, subselect) {
+  
+  eta   = theta["eta"]
+  a     = theta["a"]
+  b     = theta["b"]
+  c     = theta["c"]
+  d     = theta["d"]
+  gamma = theta["gamma"]
+  
+  X = numeric(n_data)
+  V = numeric(n_data)
+  
+  # Initial condition
+  X_curr = 1.11
+  V_curr = 5.43
+  
+  X[1] = X_curr
+  V[1] = V_curr
+  
+  save_idx = 2
+  
+  for (i in 2:((n_data - 1) * subselect + 1)) {
+    
+    X_prev = X_curr
+    V_prev = V_curr
+    
+    X_curr = X_prev + h_sim * V_prev
+    
+    V_curr = V_prev +
+      h_sim * (-eta * V_prev +
+                 a * X_prev^3 +
+                 b * X_prev^2 +
+                 c * X_prev +
+                 d) +
+      sqrt(h_sim) * sqrt(gamma) * rnorm(1)
+    
+    if ((i - 1) %% subselect == 0) {
+      X[save_idx] = X_curr
+      V[save_idx] = V_curr
+      save_idx = save_idx + 1
+    }
+  }
+  
+  data.frame(X = X, V = V)
+}
+
+# ---- Simulate Model 1 ----
+SimulateModel1_sub = function(theta, h_sim, n_data, subselect) {
+  
+  eta   = theta["eta"]
+  a     = theta["a"]
+  b     = 0 
+  c     = theta["c"]
+  d     = 0
+  gamma = theta["gamma"]
+  
+  X = numeric(n_data)
+  V = numeric(n_data)
+  
+  # Initial condition
+  X_curr = 1.11
+  V_curr = 5.43
+  
+  X[1] = X_curr
+  V[1] = V_curr
+  
+  save_idx = 2
+  
+  for (i in 2:((n_data - 1) * subselect + 1)) {
+    
+    X_prev = X_curr
+    V_prev = V_curr
+    
+    X_curr = X_prev + h_sim * V_prev
+    
+    V_curr = V_prev +
+      h_sim * (-eta * V_prev +
+                 a * X_prev^3 +
+                 b * X_prev^2 +
+                 c * X_prev +
+                 d) +
+      sqrt(h_sim) * sqrt(gamma) * rnorm(1)
+    
+    if ((i - 1) %% subselect == 0) {
+      X[save_idx] = X_curr
+      V[save_idx] = V_curr
+      save_idx = save_idx + 1
+    }
+  }
+  
+  data.frame(X = X, V = V)
+}
+```
+
+```{r}
+#theta_hat = fitNM$par
+theta_hat = fitBFGS$par
+
+theta_start = c(
+  eta   = 60,
+  a     = -130,
+  b     = 0,
+  c     = 115,
+  d     = 0,
+  gamma = 8000
+)
+
+lower = c(
+  eta = 1,
+  a = -Inf,
+  b = -Inf,
+  c = -Inf,
+  d = -Inf,
+  gamma = 1e-8
+)
+
+upper = c(
+  eta = Inf,
+  a = -1e-8,
+  b = Inf,
+  c = Inf,
+  d = Inf,
+  gamma = Inf
+)
+
+h_sim = 0.0001
+subselect = 200
+M = 500
+n = 500000
+h_fit = h_sim * subselect
+
+BootParameters= data.frame(
+  eta = rep(NA, M),
+  a = rep(NA, M), 
+  b = rep(NA, M), 
+  c = rep(NA, M),
+  d = rep(NA, M),
+  gamma = rep(NA, M),
+  convergence = rep(NA, M),
+  value = rep(NA,M)
+)
+
+
+for (m in 1:M) {
+  
+  # ---- Simulate ---- 
+
+  SimData_sub = SimulateModel0_sub(theta = theta_hat, h_sim = h_sim, n_data = 2499, subselect = 200)
+  
+  print(2)
+  # ----Refit ----
+  fit_boot0 = optim(
+    par = theta_hat,
+    fn = neg_loglik,
+    data = SimData_sub,
+    h = h_fit,
+    method = "L-BFGS-B",
+    lower = lower,
+  upper = upper,
+  )
+
+  # ---- Store estimates ---- 
+  BootParameters[m, ] = c(fit_boot0$par, fit_boot0$convergence, fit_boot0$value)
+  
+  print(paste("Boot: ",m, fit_boot0$par))
+}
+
+
+```
+
+```{r}
+# ---- Reorder for overview + plots ----
+SimParameters_clean = BootParameters[complete.cases(BootParameters), 1:6 ]
+
+boot_se = apply(SimParameters_clean, 2, sd)
+boot_mean = apply(SimParameters_clean, 2, mean)
+
+boot_ci = apply(
+  SimParameters_clean,
+  2,
+  quantile,
+  probs = c(0.025, 0.975)
+)
+
+boot_bias = colMeans(SimParameters_clean) - theta_hat
+
+# ---- Plotting simulation (Bootstrap) results ----
+SimParametersClean_long = SimParameters_clean %>% 
+  pivot_longer(
+    cols = everything(),
+    names_to = "parameter",
+    values_to = "estimate"
+  )
+
+fit_values = tibble(
+  parameter = names(fitBFGS$par),
+  fit = as.numeric(fitBFGS$par)
+)
+
+# Density plot with fitted values as vertical lines
+ggplot(SimParametersClean_long, aes(x = estimate)) +
+  geom_density(fill = "gray80", color = "black") +
+  geom_vline(data = fit_values, aes(xintercept = fit), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(~ parameter, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Density of Simulated Parameters with MLEs", x = "Estimate", y = "Density")
+
+# Histogram plot with fitted values as vertical lines
+ggplot(SimParametersClean_long, aes(x = estimate)) +
+  geom_histogram(bins = 5, fill = "gray80", color = "black") +
+  geom_vline(data = fit_values, aes(xintercept = fit), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(~ parameter, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Histogram of Simulated Parameters with MLEs", x = "Estimate", y = "Count")
+```
+
+```{r}
+param_labs = c(
+  eta   = expression(eta),
+  a     = "a",
+  b     = "b",
+  c     = "c",
+  d     = "d",
+  gamma = expression(gamma)
+)
+
+# Density plot
+p_density = ggplot(SimParametersClean_long, aes(x = estimate)) +
+  geom_density(
+    fill = "grey85",
+    color = "grey25",
+    linewidth = 0.6,
+    alpha = 0.8
+  ) +
+  geom_vline(
+    data = fit_values,
+    aes(xintercept = fit),
+    color = "red3",
+    linetype = "dashed",
+    linewidth = 0.8
+  ) +
+  facet_wrap(
+    ~ parameter,
+    scales = "free",
+    ncol = 2,
+    labeller = as_labeller(param_labs, default = label_parsed)
+  ) +
+  labs(
+    title = "Simulation distributions of parameter estimates with true parameter estimated by Model 0",
+    subtitle = "Dashed red lines show fitted MLEs Model 0 from the observed data",
+    x = "Estimate",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, color = "grey35"),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+
+p_hist = ggplot(SimParametersClean_long, aes(x = estimate)) +
+  geom_histogram(
+    bins = 15,
+    fill = "grey85",
+    color = "grey25",
+    linewidth = 0.3
+  ) +
+  geom_vline(
+    data = fit_values,
+    aes(xintercept = fit),
+    color = "red3",
+    linetype = "dashed",
+    linewidth = 0.8
+  ) +
+  facet_wrap(
+    ~ parameter,
+    scales = "free",
+    ncol = 2,
+    labeller = as_labeller(param_labs, default = label_parsed)
+  ) +
+  labs(
+    title = "Simulation histograms of parameter estimates with true parameter estimated by Model 0",
+    subtitle = "Dashed red lines show fitted MLEs Model 0 from the observed data",
+    x = "Estimate",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, color = "grey35"),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+
+p_density
+```
+
+## M0 : Full
+
+```{r}
+
+h_sim = 0.0001
+subselect = 200
+M = 500
+n = 500000
+h_fit = h_sim * subselect
+
+theta_hat_full = fitBFGS_full$par
+
+BootParametersFull1= data.frame(
+  eta = rep(NA, M),
+  a = rep(NA, M), 
+  b = rep(NA, M), 
+  c = rep(NA, M),
+  d = rep(NA, M),
+  gamma = rep(NA, M),
+  convergence = rep(NA, M),
+  value = rep(NA,M)
+)
+
+
+for (m in 1:M) {
+  
+  # ---- Simulate ---- 
+
+  SimData_sub = SimulateModel0_sub(theta = theta_hat_full, h_sim = h_sim, n_data = 2499, subselect = 200)
+  
+  print(2)
+  # ----Refit ----
+  fit_boot0_full = optim(
+    par = theta_hat_full,
+    fn = neg_loglik_full,
+    data = SimData_sub,
+    h = h_fit,
+    method = "L-BFGS-B",
+    lower = lower,
+  upper = upper,
+  )
+
+  # ---- Store estimates ---- 
+  BootParametersFull1[m, ] = c(fit_boot0_full$par, fit_boot0_full$convergence, fit_boot0_full$value)
+  
+  print(paste("Boot: ",m, fit_boot0_full$par))
+}
+
+
+# ---- Uncorrected ----
+
+theta_hat_no_bias = fitBFGS_no_bias$par
+
+BootParametersNoBias1= data.frame(
+  eta = rep(NA, M),
+  a = rep(NA, M), 
+  b = rep(NA, M), 
+  c = rep(NA, M),
+  d = rep(NA, M),
+  gamma = rep(NA, M),
+  convergence = rep(NA, M),
+  value = rep(NA,M)
+)
+
+
+for (m in 1:M) {
+  
+  # ---- Simulate ---- 
+
+  SimData_sub = SimulateModel0_sub(theta = theta_hat_no_bias, h_sim = h_sim, n_data = 2499, subselect = 200)
+  
+  print(2)
+  # ----Refit ----
+  fit_boot0_no_bias = optim(
+    par = theta_start0,
+    fn = neg_loglik_no_bias,
+    data = SimData_sub,
+    h = h_fit,
+    method = "L-BFGS-B",
+    lower = lower,
+  upper = upper,
+  )
+
+  # ---- Store estimates ---- 
+  BootParametersNoBias1[m, ] = c(fit_boot0_no_bias$par, fit_boot0_no_bias$convergence, fit_boot0_no_bias$value)
+  
+  print(paste("Boot: ",m, fit_boot0_no_bias$par, fit_boot0_no_bias$value))
+}
+```
+
+```{r}
+# ---- Bias ----
+bias_rough = colMeans(BootParameters[, 1:6], na.rm = TRUE) -
+  fitBFGS$par[1:6]
+
+bias_full = colMeans(BootParametersFull[, 1:6], na.rm = TRUE) -
+  fitBFGS_full$par[1:6]
+
+bias_uncorrected = colMeans(BootParametersNoBias[, 1:6], na.rm = TRUE) -
+  fitBFGS_no_bias$par[1:6]
+
+bias_rough
+bias_full
+bias_uncorrected
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# ---- keep only parameter columns ----
+param_names = c("eta", "a", "b", "c", "d", "gamma")
+
+# ---- bootstrap draws in long format ----
+boot_long = bind_rows(
+  BootParameters %>%
+    select(all_of(param_names)) %>%
+    mutate(Model = "Rough"),
+  
+  BootParametersFull %>%
+    select(all_of(param_names)) %>%
+    mutate(Model = "Full"),
+  
+  BootParametersNoBias %>%
+    select(all_of(param_names)) %>%
+    mutate(Model = "Uncorrected")
+) %>%
+  pivot_longer(
+    cols = all_of(param_names),
+    names_to = "Parameter",
+    values_to = "Estimate"
+  )
+
+# ---- vertical line values in long format ----
+true_vals = bind_rows(
+  data.frame(
+    Model = "Rough",
+    Parameter = names(fitBFGS$par),
+    TrueValue = as.numeric(fitBFGS$par)
+  ),
+  data.frame(
+    Model = "Full",
+    Parameter = names(fitBFGS_full$par),
+    TrueValue = as.numeric(fitBFGS_full$par)
+  ),
+  data.frame(
+    Model = "Uncorrected",
+    Parameter = names(fitBFGS_no_bias$par),
+    TrueValue = as.numeric(fitBFGS_no_bias$par)
+  )
+)
+
+# ---- make sure model order is nice ----
+boot_long$Model = factor(boot_long$Model, levels = c("Rough", "Full", "Uncorrected"))
+true_vals$Model = factor(true_vals$Model, levels = c("Rough", "Full", "Uncorrected"))
+
+# ---- plot ----
+model_cols = c(
+  "Rough" = "darkred",
+  "Full" = "darkgreen",
+  "Uncorrected" = "darkblue"
+)
+
+param_labs = c(
+  eta = expression(eta),
+  a = "a",
+  b = "b",
+  c = "c",
+  d = "d",
+  gamma = expression(gamma)
+)
+
+
+combinedplot = ggplot(boot_long, aes(x = Estimate, color = Model, fill = Model)) +
+  geom_density(alpha = 0.2, linewidth = 1) +
+  geom_vline(
+    data = true_vals,
+    aes(xintercept = TrueValue, color = Model),
+    linetype = "dashed",
+    linewidth = 0.9,
+    show.legend = FALSE
+  ) +
+  facet_wrap(~ Parameter, scales = "free", ncol = 2, labeller = as_labeller(param_labs, default = label_parsed)) +
+  labs(
+    title = "Bootstrap densities by parameter",
+    x = "Parameter estimate",
+    y = "Density"
+  ) +
+  scale_color_manual(values = model_cols) +
+  scale_fill_manual(values = model_cols) +
+  theme_minimal(base_size = 13) +
+ theme(
+  plot.title = element_text(hjust = 0.5, face = "bold"),
+  legend.position = "top",
+  legend.title = element_blank()
+)
+```
+
+```{r}
+theta_hat1 = fitBFGS1$par
+
+theta_start1 = c(
+  eta   = 60,
+  a     = -130,
+  c     = 115,
+  gamma = 8000
+)
+
+lower1 = c(
+  eta = 1,
+  a = -Inf,
+  c = -Inf,
+  gamma = 1e-8
+)
+
+upper1 = c(
+  eta = Inf,
+  a = -1e-8,
+  c = Inf,
+  gamma = Inf
+)
+
+h_sim = 0.0001
+subselect = 200
+M = 500
+n = 500000
+h_fit = h_sim * subselect
+
+BootParameters1 = data.frame(
+  eta = rep(NA, M),
+  a = rep(NA, M), 
+  c = rep(NA, M),
+  gamma = rep(NA, M),
+  convergence = rep(NA, M),
+  value = rep(NA,M)
+)
+
+
+for (m in 1:M) {
+  
+  # ---- Simulate ---- 
+  
+  SimData_sub1 = SimulateModel1_sub(theta = theta_hat, h_sim = h_sim, n_data = 2499, subselect = 200)
+
+  # ----Refit ----
+  fit_boot1 = optim(
+    par = theta_hat1,
+    fn = neg_loglik1,
+    data = SimData_sub1,
+    h = 0.02,
+    method = "L-BFGS-B",
+    lower = lower1,
+  upper = upper1,
+  )
+  # ---- Store estimates ---- 
+  BootParameters1[m, ] = c(fit_boot1$par, fit_boot1$convergence, fit_boot1$value)
+  
+  print(paste("Boot: ",m, fit_boot1$par))
+}
+
+```
+
+```{r}
+# ---- Reorder for overview + plots ----
+SimParameters_clean1 = BootParameters1[complete.cases(BootParameters1), 1:4 ]
+
+boot_se1 = apply(SimParameters_clean1, 2, sd)
+boot_mean1 = apply(SimParameters_clean1, 2, mean)
+
+boot_ci1 = apply(
+  SimParameters_clean1,
+  2,
+  quantile,
+  probs = c(0.025, 0.975)
+)
+
+boot_bias1 = colMeans(SimParameters_clean1) - theta_hat1
+
+# ---- Plotting simulation (Bootstrap) results ----
+SimParametersClean_long1 = SimParameters_clean1 %>% 
+  pivot_longer(
+    cols = everything(),
+    names_to = "parameter",
+    values_to = "estimate"
+  )
+
+fit_values1 = tibble(
+  parameter = names(fitBFGS1$par),
+  fit = as.numeric(fitBFGS1$par)
+)
+
+# Density plot with fitted values as vertical lines
+ggplot(SimParametersClean_long1, aes(x = estimate)) +
+  geom_density(fill = "gray80", color = "black") +
+  geom_vline(data = fit_values1, aes(xintercept = fit), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(~ parameter, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Density of Simulated Parameters with MLEs", x = "Estimate", y = "Density")
+
+# Histogram plot with fitted values as vertical lines
+ggplot(SimParametersClean_long1, aes(x = estimate)) +
+  geom_histogram(bins = 5, fill = "gray80", color = "black") +
+  geom_vline(data = fit_values1, aes(xintercept = fit), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(~ parameter, scales = "free", ncol = 2) +
+  theme_minimal() +
+  labs(title = "Histogram of Simulated Parameters with MLEs", x = "Estimate", y = "Count")
+```
+
+```{r}
+param_labs = c(
+  eta   = expression(eta),
+  a     = "a",
+  c     = "c",
+  gamma = expression(gamma)
+)
+
+# Density plot
+p_density_M1 = ggplot(SimParametersClean_long1, aes(x = estimate)) +
+  geom_density(
+    fill = "grey85",
+    color = "grey25",
+    linewidth = 0.6,
+    alpha = 0.8
+  ) +
+  geom_vline(
+    data = fit_values1,
+    aes(xintercept = fit),
+    color = "red3",
+    linetype = "dashed",
+    linewidth = 0.8
+  ) +
+  facet_wrap(
+    ~ parameter,
+    scales = "free",
+    ncol = 2,
+    labeller = as_labeller(param_labs, default = label_parsed)
+  ) +
+  labs(
+    title = "Simulation distributions of parameter estimates: true parameter estimated by Model 1",
+    subtitle = "Dashed red lines show fitted MLEs Model 1 from the observed data",
+    x = "Estimate",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.caption = element_text(hjust = 0.5, color = "grey35"),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+
+
+p_hist_M1 = ggplot(SimParametersClean_long1, aes(x = estimate)) +
+  geom_histogram(
+    bins = 15,
+    fill = "grey85",
+    color = "grey25",
+    linewidth = 0.3
+  ) +
+  geom_vline(
+    data = fit_values1,
+    aes(xintercept = fit),
+    color = "red3",
+    linetype = "dashed",
+    linewidth = 0.8
+  ) +
+  facet_wrap(
+    ~ parameter,
+    scales = "free",
+    ncol = 2,
+    labeller = as_labeller(param_labs, default = label_parsed)
+  ) +
+  labs(
+    title = "Simulation histograms of parameter estimates: true parameter estimated by Model 1",
+    subtitle = "Dashed red lines show fitted MLEs Model 1 from the observed data",
+    x = "Estimate",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.caption = element_text(hjust = 0.5, color = "grey35"),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+# Testing for Grid Starting Values
+
+```{r}
+theta_grid = expand.grid(
+  eta   = c(60, 70),
+  a     = c(-130, -150),
+  b     = c(0, 10),
+  c     = c(100, 115),
+  d     = c(0, 10),
+  gamma = c(8000, 6000)
+)
+
+fits_grid = vector("list", nrow(theta_grid))
+
+for (j in 1:nrow(theta_grid)) {
+  
+  theta_start_j = as.numeric(theta_grid[j, ])
+  names(theta_start_j) = names(theta_grid)
+  
+  cat("Running start", j, "of", nrow(theta_grid), "\n")
+  
+  fitBFGS_j = optim(
+        par = theta_start_j,
+        fn = neg_loglik,
+        data = Ca2_data,
+        h = 0.02,
+        method = "L-BFGS-B",
+        lower = c(
+          eta = 1e-8,
+          a = -Inf,
+          b = -Inf,
+          c = -Inf,
+          d = -Inf,
+          gamma = 200
+        ),
+        upper = c(
+          eta = Inf,
+          a = -1e-8,
+          b = Inf,
+          c = Inf,
+          d = Inf,
+          gamma = Inf
+        ))
+  
+   fits_grid[[j]] = data.frame(
+    run = j,
+    
+    eta_start = theta_start_j["eta"],
+    a_start = theta_start_j["a"],
+    b_start = theta_start_j["b"],
+    c_start = theta_start_j["c"],
+    d_start = theta_start_j["d"],
+    gamma_start = theta_start_j["gamma"],
+    
+    eta_hat = fitBFGS_j$par["eta"],
+    a_hat = fitBFGS_j$par["a"],
+    b_hat = fitBFGS_j$par["b"],
+    c_hat = fitBFGS_j$par["c"],
+    d_hat = fitBFGS_j$par["d"],
+    gamma_hat = fitBFGS_j$par["gamma"],
+    
+    value = fitBFGS_j$value,
+    convergence = fitBFGS_j$convergence
+  )
+}
+
+grid_results = do.call(rbind, fits_grid)
+
+grid_results = grid_results[order(grid_results$value), ]
+
+head(grid_results)
+```
+
+```{r}
+grid_long = grid_results %>%
+  select(run, convergence, value, ends_with("_hat")) %>%
+  pivot_longer(
+    cols = ends_with("_hat"),
+    names_to = "parameter",
+    values_to = "estimate"
+  ) %>%
+  mutate(
+    parameter = gsub("_hat", "", parameter),
+    convergence = factor(convergence)
+  )
+
+ggplot(grid_long, aes(x = run, y = estimate, colour = convergence)) +
+  geom_point(size = 2) +
+  geom_line(alpha = 0.4) +
+  facet_wrap(~ parameter, scales = "free_y") +
+  labs(
+    title = "Estimated parameters across starting values",
+    x = "Starting value run",
+    y = "Estimated parameter",
+    colour = "Convergence"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(grid_long, aes(x = value, y = estimate, colour = convergence)) +
+  geom_point(size = 2) +
+  facet_wrap(~ parameter, scales = "free_y") +
+  labs(
+    title = "Estimated parameters versus negative log-likelihood",
+    x = "Negative log-likelihood",
+    y = "Estimated parameter"
+  ) +
+  theme_minimal(base_size = 13) 
+```
+
+# Bootstrap likelihood
+
+Simulating data with M0 and then fitting both
+
+```{r}
+
+set.seed(16)
+# -----------------------------
+# Settings
+# -----------------------------
+
+M = 150          
+h_sim = 0.0001
+subselect = 200
+h_fit = h_sim * subselect
+
+n_obs = nrow(Ca2_final)
+
+# Observed LR statistic
+LR_obs = 2 * (fitBFGS$value - fitBFGS2$value)
+
+# Fitted null parameters: M0
+theta_M0_hat = fitBFGS$par
+
+# Starting values
+theta_start_M0 = fitBFGS$par
+theta_start_M2 = fitBFGS2$par
+
+# Storage
+boot_results = vector("list", 38)
+
+for (m in 1:38) {
+  
+  cat("Bootstrap run", m, "of", M, "\n")
+  
+  # -----------------------------
+  # 1. Simulate under null model M0
+  # -----------------------------
+  
+  SimDataBoot = SimulateModel0_sub(theta = theta_M0_hat, h_sim = h_sim, n_data = 2499, subselect = 200)
+  
+  print('Simulation finished')
+
+  # -----------------------------
+  # 2. Fit restricted model M0
+  # -----------------------------
+  
+  fit_M0_boot =  optim(
+      par = theta_start_M0,
+      fn = neg_loglik,
+      data = SimDataBoot,
+      h = h_fit,
+      method = "L-BFGS-B",
+      lower = c(
+        eta = 1e-8,
+        a = -Inf,
+        b = -Inf,
+        c = -Inf,
+        d = -Inf,
+        gamma = 200
+      ),
+      upper = c(
+        eta = Inf,
+        a = -1e-8,
+        b = Inf,
+        c = Inf,
+        d = Inf,
+        gamma = Inf
+      )
+    )
+  
+  print("M0 finished")
+  
+  # -----------------------------
+  # 3. Fit full model M2
+  # -----------------------------
+  
+  fit_M2_boot =  optim(
+      par = theta_start_M2,
+      fn = neg_loglik2,
+      data = SimDataBoot,
+      h = h_fit,
+      method = "L-BFGS-B",
+      lower = c(
+        eta = 1e-8,
+        a = -Inf,
+        b = -Inf,
+        c = -Inf,
+        d = -Inf,
+        alpha = 1e-8,
+        beta = -Inf,
+        gamma = 200
+      ),
+      upper = c(
+        eta = Inf,
+        a = -1e-8,
+        b = Inf,
+        c = Inf,
+        d = Inf,
+        alpha = Inf,
+        beta = Inf,
+        gamma = Inf
+      )
+    )
+  
+  print("M2 finished")
+  
+  # -----------------------------
+  # 4. Save bootstrap LR
+  # -----------------------------
+  
+    nll_M0_boot = fit_M0_boot$value
+    nll_M2_boot = fit_M2_boot$value
+    
+    LR_boot = 2 * (nll_M0_boot - nll_M2_boot)
+    
+    boot_results[[m]] = data.frame(
+      m = m,
+      nll_M0 = nll_M0_boot,
+      nll_M2 = nll_M2_boot,
+      LR = LR_boot,
+      conv_M0 = fit_M0_boot$convergence,
+      conv_M2 = fit_M2_boot$convergence,
+      
+      eta_M0 = fit_M0_boot$par["eta"],
+      a_M0 = fit_M0_boot$par["a"],
+      b_M0 = fit_M0_boot$par["b"],
+      c_M0 = fit_M0_boot$par["c"],
+      d_M0 = fit_M0_boot$par["d"],
+      gamma_M0 = fit_M0_boot$par["gamma"],
+      
+      eta_M2 = fit_M2_boot$par["eta"],
+      a_M2 = fit_M2_boot$par["a"],
+      b_M2 = fit_M2_boot$par["b"],
+      c_M2 = fit_M2_boot$par["c"],
+      d_M2 = fit_M2_boot$par["d"],
+      alpha_M2 = fit_M2_boot$par["alpha"],
+      beta_M2 = fit_M2_boot$par["beta"],
+      gamma_M2 = fit_M2_boot$par["gamma"]
+    )
+    
+}
+```
+
+```{r}
+
+combined_boot_results = bind_rows(boot_results)
+
+head(combined_boot_results)
+```
+
+```{r}
+set.seed(16)
+# -----------------------------
+# Settings
+# -----------------------------
+
+M = 500          # increase later, e.g. 500 or 1000
+h_sim = 0.0001
+subselect = 200
+h_fit = h_sim * subselect
+
+n_obs = nrow(Ca2_final)
+
+# Observed LR statistic
+LR_obs = 2 * (fitBFGS$value - fitBFGS2$value)
+
+# Fitted null parameters: M0
+theta_M1_hat = fitBFGS1$par
+
+# Starting values
+theta_start_M0 = fitBFGS$par
+theta_start_M1 = fitBFGS1$par
+
+# Storage
+boot_results = vector("list", 38)
+
+for (m in 1:38) {
+  
+  cat("Bootstrap run", m, "of", M, "\n")
+  
+  # -----------------------------
+  # 1. Simulate under null model M0
+  # -----------------------------
+  
+  SimDataBoot = SimulateModel0_sub(theta = theta_M0_hat, h_sim = h_sim, n_data = 2499, subselect = 200)
+  
+  print('Simulation finished')
+
+  # -----------------------------
+  # 2. Fit restricted model M0
+  # -----------------------------
+  
+  fit_M0_boot =  optim(
+      par = theta_start_M0,
+      fn = neg_loglik,
+      data = SimDataBoot,
+      h = h_fit,
+      method = "L-BFGS-B",
+      lower = c(
+        eta = 1e-8,
+        a = -Inf,
+        b = -Inf,
+        c = -Inf,
+        d = -Inf,
+        gamma = 200
+      ),
+      upper = c(
+        eta = Inf,
+        a = -1e-8,
+        b = Inf,
+        c = Inf,
+        d = Inf,
+        gamma = Inf
+      )
+    )
+  
+  print("M0 finished")
+  
+  # -----------------------------
+  # 3. Fit full model M2
+  # -----------------------------
+  
+  fit_M2_boot =  optim(
+      par = theta_start_M2,
+      fn = neg_loglik2,
+      data = SimDataBoot,
+      h = h_fit,
+      method = "L-BFGS-B",
+      lower = c(
+        eta = 1e-8,
+        a = -Inf,
+        b = -Inf,
+        c = -Inf,
+        d = -Inf,
+        alpha = 1e-8,
+        beta = -Inf,
+        gamma = 200
+      ),
+      upper = c(
+        eta = Inf,
+        a = -1e-8,
+        b = Inf,
+        c = Inf,
+        d = Inf,
+        alpha = Inf,
+        beta = Inf,
+        gamma = Inf
+      )
+    )
+  
+  print("M2 finished")
+  
+  # -----------------------------
+  # 4. Save bootstrap LR
+  # -----------------------------
+  
+    nll_M0_boot = fit_M0_boot$value
+    nll_M2_boot = fit_M2_boot$value
+    
+    LR_boot = 2 * (nll_M0_boot - nll_M2_boot)
+    
+    boot_results[[m]] = data.frame(
+      m = m,
+      nll_M0 = nll_M0_boot,
+      nll_M2 = nll_M2_boot,
+      LR = LR_boot,
+      conv_M0 = fit_M0_boot$convergence,
+      conv_M2 = fit_M2_boot$convergence,
+      
+      eta_M0 = fit_M0_boot$par["eta"],
+      a_M0 = fit_M0_boot$par["a"],
+      b_M0 = fit_M0_boot$par["b"],
+      c_M0 = fit_M0_boot$par["c"],
+      d_M0 = fit_M0_boot$par["d"],
+      gamma_M0 = fit_M0_boot$par["gamma"],
+      
+      eta_M2 = fit_M2_boot$par["eta"],
+      a_M2 = fit_M2_boot$par["a"],
+      b_M2 = fit_M2_boot$par["b"],
+      c_M2 = fit_M2_boot$par["c"],
+      d_M2 = fit_M2_boot$par["d"],
+      alpha_M2 = fit_M2_boot$par["alpha"],
+      beta_M2 = fit_M2_boot$par["beta"],
+      gamma_M2 = fit_M2_boot$par["gamma"]
+    )
+    
+}
+```
+
+```{r}
+n_obs = nrow(Ca2_final)
+
+# Observed LR statistic
+LR_obs = 2 * (fitBFGS1$value - fitBFGS$value)
+
+# Fitted null parameters: M0
+theta_M1_hat = fitBFGS1$par
+
+# Starting values
+theta_start_M0 = fitBFGS$par
+theta_start_M1 = fitBFGS1$par
+
+# Storage
+BootResultsM0M1 = vector("list", 38)
+
+set.seed(40) 
+for (m in 1:M) {
+  
+  cat("Bootstrap run", m, "of", M, "\n")
+  
+  # -----------------------------
+  # 1. Simulate under null model M0
+  # -----------------------------
+  
+  SimDataBoot = SimulateModel1_sub(theta = theta_M1_hat, h_sim = h_sim, n_data = 2499, subselect = 200)
+  
+  print('Simulation finished')
+
+  # -----------------------------
+  # 2. Fit restricted model M0
+  # -----------------------------
+  
+  fit_M0_boot =  optim(
+      par = theta_start_M0,
+      fn = neg_loglik,
+      data = SimDataBoot,
+      h = h_fit,
+      method = "L-BFGS-B",
+      lower = c(
+        eta = 1e-8,
+        a = -Inf,
+        b = -Inf,
+        c = -Inf,
+        d = -Inf,
+        gamma = 200
+      ),
+      upper = c(
+        eta = Inf,
+        a = -1e-8,
+        b = Inf,
+        c = Inf,
+        d = Inf,
+        gamma = Inf
+      )
+    )
+  
+  print("M0 finished")
+  
+  # -----------------------------
+  # 3. Fit full model M2
+  # -----------------------------
+  
+  fit_M1_boot =  optim(
+      par = theta_start_M1,
+      fn = neg_loglik1,
+      data = SimDataBoot,
+      h = h_fit,
+      method = "L-BFGS-B",
+      lower = c(
+        eta = 1e-8,
+        a = -Inf,
+        c = -Inf,
+        gamma = 200
+      ),
+      upper = c(
+        eta = Inf,
+        a = -1e-8,
+        c = Inf,
+        gamma = Inf
+      )
+    )
+  
+  print("M1 finished")
+  
+  # -----------------------------
+  # 4. Save bootstrap LR
+  # -----------------------------
+  
+    nll_M0_boot = fit_M0_boot$value
+    nll_M1_boot = fit_M1_boot$value
+    
+    LR_boot = 2 * (nll_M1_boot - nll_M0_boot)
+    
+    BootResultsM0M1[[m]] = data.frame(
+      m = m,
+      nll_M0 = nll_M0_boot,
+      nll_M1 = nll_M1_boot,
+      LR = LR_boot,
+      conv_M0 = fit_M0_boot$convergence,
+      conv_M1 = fit_M1_boot$convergence,
+      
+      eta_M0 = fit_M0_boot$par["eta"],
+      a_M0 = fit_M0_boot$par["a"],
+      b_M0 = fit_M0_boot$par["b"],
+      c_M0 = fit_M0_boot$par["c"],
+      d_M0 = fit_M0_boot$par["d"],
+      gamma_M0 = fit_M0_boot$par["gamma"],
+      
+      eta_M1 = fit_M1_boot$par["eta"],
+      a_M1 = fit_M1_boot$par["a"],
+      b_M1 = fit_M1_boot$par["b"],
+      c_M1 = fit_M1_boot$par["c"],
+      d_M1 = fit_M1_boot$par["d"],
+      alpha_M1 = fit_M1_boot$par["alpha"],
+      beta_M1 = fit_M1_boot$par["beta"],
+      gamma_M1 = fit_M1_boot$par["gamma"]
+    )
+    
+}
+```
+
+```{r}
+boot_results_M0M1  = bind_rows(BootResultsM0M1)
+
+# ---- p-value ----
+mean(boot_results_M0M1$LR>3.800)
+```
